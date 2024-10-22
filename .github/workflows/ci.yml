@@ -19,22 +19,11 @@ jobs:
     strategy:
       fail-fast: false
 
-      # Recommendations:
-      #   * support at least 2 operating systems
-      #   * support at least 2 compilers
-      #   * make sure all supported configurations for your project are built
-      #
-      # Disable/enable builds in this list to meet the above recommendations
-      # and your own projects needs
       matrix:
         os:
           - ubuntu-22.04
-          - macos-12
           - windows-2022
         compiler:
-          # you can specify the version after `-` like "clang-13.0.0".
-          - clang
-          - clang-16.0.6
           - gcc-13
           - msvc
         build_type:
@@ -44,30 +33,15 @@ jobs:
           - ON
           - OFF
 
-        # To exclude a specific job from the matrix (e.g gcc on Windows), you can use this syntax.
         exclude:
           - os: ubuntu-22.04
             compiler: msvc
-          - os: macos-12
-            compiler: msvc
-
-          # FIXME: Util the sdk support is propagated to the runners, see https://github.com/actions/runner-images/issues/9997
-          - os: macos-12
-            compiler: gcc-13
-
-          # FIXME: Until aminya/setup-cpp supports macos arm64
-          - os: macos-12
-            compiler: clang-16.0.6
-          # Latest Visual Studio runtime requires clang 17+
-          - os: windows-2022
-            compiler: clang-16.0.6
-
-          # FIXME: Solve annotated_string mismatch in Windows to enable developer mode totally
-          - os: windows-2022
-            compiler: msvc
-            developer_mode: ON
           - os: windows-2022
             compiler: gcc-13
+
+          - os: windows-2022
+            build_type: Debug
+          - os: windows-2022
             developer_mode: ON
 
         include:
@@ -77,17 +51,6 @@ jobs:
             package_generator: ZIP
 
     steps:
-      # Use this if a fairly large library is requried, like building and using llvm as a library.
-      # - name: Linux - Maximize build disk space
-      #   uses: easimon/maximize-build-space@v10
-      #   if: runner.os == 'Linux'
-      #   with:
-      #     root-reserve-mb: 30720
-      #     swap-size-mb: 1024
-      #     remove-android: "true"
-      #     remove-docker-images: "true"
-      #     remove-dotnet: "true"
-
       - uses: actions/checkout@v4
 
       - name: Parse environment
@@ -130,10 +93,23 @@ jobs:
           compiler_name: ${{ steps.parsed.outputs.compiler_name }}
           compiler_version: ${{ steps.parsed.outputs.compiler_version }}
           build_type: ${{ matrix.build_type }}
+          recipe_repository: FeignClaims/customized_conan_recipes
+
+      - name: Windows - install llvm
+        if: steps.parsed.outputs.compiler_name == 'msvc'
+        run: |
+          mkdir C:\llvm
+          cd C:\llvm
+          git clone https://github.com/llvm/llvm-project.git
+          cd llvm-project
+          git checkout llvmorg-18.1.4
+          cmake -S llvm -B build -G 'Visual Studio 17 2022' -A X64 -Thost=x64 -DCMAKE_INSTALL_PREFIX=C:/llvm_install/ -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
+          cmake --build build --config Release -t install
 
       - name: Configure cmake
         run: |
-          cmake --preset ${{ steps.parsed.outputs.compiler_name }} ${{ steps.parsed.outputs.compiler_name == 'msvc' && '-A x64 -T v143' || '' }} -D ENABLE_DEVELOPER_MODE:BOOL=${{ matrix.developer_mode }} -D OPT_ENABLE_COVERAGE:BOOL=${{ matrix.build_type == 'Debug' }}
+          cmake --preset ${{ steps.parsed.outputs.compiler_name }} ${{ steps.parsed.outputs.compiler_name == 'msvc' && '-A x64 -T v143 -D CMAKE_PREFIX_PATH:STRING="C:/llvm_install/lib/cmake/llvm/;C:/llvm_install/lib/cmake/clang/"' || '' }} -D ENABLE_DEVELOPER_MODE:BOOL=${{ matrix.developer_mode }} -D OPT_ENABLE_COVERAGE:BOOL=${{ matrix.build_type == 'Debug' }} -D OPT_WARNINGS_AS_ERRORS:BOOL=OFF
 
       - name: Build and test
         run: |

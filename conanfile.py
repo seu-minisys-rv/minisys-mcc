@@ -7,23 +7,25 @@ from conan.tools.scm import Version
 import os
 
 
-class sample_project_recipe(ConanFile):
-    name = "sample_project"
-    description = "A CMake template using Conan 2"
+class mcc_recipe(ConanFile):
+    name = "mcc"
+    description = "Minisys-RV C compiler"
     license = "Unlicense"
-    url = "https://github.com/FeignClaims/cpp_conan_template"
-    homepage = "https://github.com/FeignClaims/cpp_conan_template"
-    topics = ("template")
-    package_type = "library"
+    url = "https://github.com/seu-minisys-rv/minisys-mcc"
+    homepage = "https://github.com/seu-minisys-rv/minisys-mcc"
+    topics = ("compiler", "Minisys-RV")
+    package_type = "application"
     settings = "os", "arch", "compiler", "build_type"
     version = "0.0.1"
     options = {
         "shared": [True, False],
         "fPIC": [True, False],
+        "with_llvm": [True, False],
     }
     default_options = {
         "shared": False,
         "fPIC": True,
+        "with_llvm": False,
     }
 
     def config_options(self):
@@ -36,21 +38,21 @@ class sample_project_recipe(ConanFile):
         self._strict_options_requirements()
 
     def layout(self):
-        # By default, distinguish configuraiotns by compiler name
-        # This can be changed by setting `tools.cmake.cmake_layout:build_folder_vars` in command-line or profiles
         self.folders.build_folder_vars = ["settings.compiler"]
         cmake_layout(self)
 
     def requirements(self):
+        self.requires("antlr4-cppruntime/4.13.1")
+        self.requires("antlr4/4.13.1")
         self.requires("fmt/11.0.2")
+        self.requires("llvm/18.1.4" if self.options.with_llvm else "llvm/system")
         self.requires("ms-gsl/4.0.0")
-        self.requires("range-v3/0.12.0")
+        self.requires("range-v3/cci.20240905")
 
     @property
     def _min_cppstd(self):
         return 20
 
-    # In case the project requires C++14/17/20/... the minimum compiler version should be listed
     @property
     def _compilers_minimum_version(self):
         return {"msvc": "193",
@@ -60,7 +62,6 @@ class sample_project_recipe(ConanFile):
 
     def _validate_cppstd(self):
         if self.settings.compiler.get_safe("cppstd"):
-            # Validate the minimum cpp standard supported when installing the package. For C++ projects only
             check_min_cppstd(self, self._min_cppstd)
         minimum_version = self._compilers_minimum_version.get(str(self.settings.compiler), False)
         if minimum_version and Version(self.settings.compiler.version) < minimum_version:
@@ -71,7 +72,6 @@ class sample_project_recipe(ConanFile):
     @property
     def _required_options(self):
         options = []
-        # Usage: options.append(("boost", [("without_graph", False), ("without_test", False)]))
         return options
 
     def _strict_options_requirements(self):
@@ -93,14 +93,15 @@ class sample_project_recipe(ConanFile):
 
     def build_requirements(self):
         self.tool_requires("cmake/[>=3.25 <4.0.0]")
-        self.test_requires("catch2/3.6.0")
+        self.test_requires("catch2/3.7.1")
 
     def generate(self):
         CMakeDeps(self).generate()
         toolchain = CMakeToolchain(self)
-        toolchain.cache_variables["sample_project_BUILD_TESTING"] = not self.conf.get(
+        toolchain.cache_variables["mcc_BUILD_TESTING"] = not self.conf.get(
             "tools.build:skip_test", default=False)
-        toolchain.cache_variables["sample_project_BUILD_FUZZ_TESTING"] = False
+        toolchain.cache_variables["mcc_BUILD_FUZZ_TESTING"] = False
+        toolchain.cache_variables["mcc_USE_SYSTEM_LLVM"] = not self.options.get_safe("with_llvm", False)
         toolchain.presets_prefix = ""
         toolchain.generate()
 
@@ -125,7 +126,7 @@ class sample_project_recipe(ConanFile):
         rm(self, "*.pdb", os.path.join(self.package_folder, "bin"))
 
     def package_info(self):
-        self.cpp_info.libs = ["sample_project"]
+        self.cpp_info.libs = ["mcc"]
 
-        self.cpp_info.set_property("cmake_file_name", "sample_project")
-        self.cpp_info.set_property("cmake_target_name", "sample_project::sample_project")
+        self.cpp_info.set_property("cmake_file_name", "mcc")
+        self.cpp_info.set_property("cmake_target_name", "mcc::mcc")

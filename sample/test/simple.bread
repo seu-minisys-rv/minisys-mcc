@@ -1,0 +1,5 @@
+main() {
+  i32 value;
+  value = 10;
+  return value;
+}

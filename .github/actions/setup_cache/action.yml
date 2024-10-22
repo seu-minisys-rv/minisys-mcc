@@ -28,3 +28,12 @@ runs:
         key: ${{ inputs.key }}-${{ hashFiles('conanfile.py', 'conanfile.txt') }}-${{ github.run_id }}
         restore-keys: |
           ${{ inputs.key }}-${{ hashFiles('conanfile.py', 'conanfile.txt') }}
+
+    - name: Cache llvm
+      uses: actions/cache@v4.0.2
+      if: runner.os == 'Windows'
+      with:
+        path: C:/llvm_install/
+        key: ${{ inputs.key }}-llvm-${{ github.run_id }}
+        restore-keys: |
+          ${{ inputs.key }}-llvm

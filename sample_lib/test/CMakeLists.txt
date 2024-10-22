@@ -1,1 +1,0 @@
-add_library_test(sample_lib concat CONFIGS common SOURCES concat.cpp)

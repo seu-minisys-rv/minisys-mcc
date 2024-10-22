@@ -24,16 +24,3 @@ InlayHints:
   TypeNameLimit: 24
 Hover:
   ShowAKA: Yes
-
-# Example on partly configuring some folder/files
-# ---
-# If:
-#   PathMatch:
-#     - "test_98/.*"
-#     - "test_14/.*"
-# Diagnostics:
-#   ClangTidy:
-#     Remove:
-#       - "*-owning-memory"
-#       - "*-special-member-functions"
-#       - "modernize*"
