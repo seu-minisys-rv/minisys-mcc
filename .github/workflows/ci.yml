@@ -1,0 +1,176 @@
+name: ci
+on:
+  pull_request:
+  release:
+    types: [published]
+  push:
+    tags: "*"
+    branches: "*"
+  workflow_dispatch:
+
+jobs:
+  Test:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      actions: read
+      contents: write
+      security-events: write
+    strategy:
+      fail-fast: false
+
+      # Recommendations:
+      #   * support at least 2 operating systems
+      #   * support at least 2 compilers
+      #   * make sure all supported configurations for your project are built
+      #
+      # Disable/enable builds in this list to meet the above recommendations
+      # and your own projects needs
+      matrix:
+        os:
+          - ubuntu-22.04
+          - macos-12
+          - windows-2022
+        compiler:
+          # you can specify the version after `-` like "clang-13.0.0".
+          - clang
+          - clang-16.0.6
+          - gcc-13
+          - msvc
+        build_type:
+          - Debug
+          - Release
+        developer_mode:
+          - ON
+          - OFF
+
+        # To exclude a specific job from the matrix (e.g gcc on Windows), you can use this syntax.
+        exclude:
+          - os: ubuntu-22.04
+            compiler: msvc
+          - os: macos-12
+            compiler: msvc
+
+          # FIXME: Util the sdk support is propagated to the runners, see https://github.com/actions/runner-images/issues/9997
+          - os: macos-12
+            compiler: gcc-13
+
+          # FIXME: Until aminya/setup-cpp supports macos arm64
+          - os: macos-12
+            compiler: clang-16.0.6
+          # Latest Visual Studio runtime requires clang 17+
+          - os: windows-2022
+            compiler: clang-16.0.6
+
+          # FIXME: Solve annotated_string mismatch in Windows to enable developer mode totally
+          - os: windows-2022
+            compiler: msvc
+            developer_mode: ON
+          - os: windows-2022
+            compiler: gcc-13
+            developer_mode: ON
+
+        include:
+          # Enable package for release build
+          - build_type: Release
+            developer_mode: OFF
+            package_generator: ZIP
+
+    steps:
+      # Use this if a fairly large library is requried, like building and using llvm as a library.
+      # - name: Linux - Maximize build disk space
+      #   uses: easimon/maximize-build-space@v10
+      #   if: runner.os == 'Linux'
+      #   with:
+      #     root-reserve-mb: 30720
+      #     swap-size-mb: 1024
+      #     remove-android: "true"
+      #     remove-docker-images: "true"
+      #     remove-dotnet: "true"
+
+      - uses: actions/checkout@v4
+
+      - name: Parse environment
+        id: parsed
+        uses: ./.github/actions/parse_environment
+        with:
+          os: ${{ matrix.os }}
+          compiler: ${{ matrix.compiler }}
+
+      - name: Setup cache
+        uses: ./.github/actions/setup_cache
+        with:
+          key: ${{ steps.parsed.outputs.os_name }}-${{ steps.parsed.outputs.os_version }}-${{ steps.parsed.outputs.compiler_name }}-${{ steps.parsed.outputs.compiler_version }}-${{ matrix.build_type }}-${{ matrix.developer_mode }}
+
+      - name: Setup cpp
+        uses: aminya/setup-cpp@v0.37.0
+        with:
+          compiler: ${{ matrix.compiler }}
+          vcvarsall: ${{ runner.os == 'Windows' }}
+
+          cmake: true
+          ninja: true
+          ccache: true
+          python: true
+
+          # clang and clang-tidy version should match according to https://github.com/aminya/setup-cpp/issues/249
+          clangtidy: ${{ startsWith(matrix.compiler, 'clang-') && steps.parsed.outputs.compiler_version || 'true' }}
+          cppcheck: true
+
+          gcovr: 7.2 # The default version 5.2 stucks on macos gcc
+          opencppcoverage: true
+
+      - name: Setup conan
+        uses: ./.github/actions/setup_conan
+        id: conan
+        with:
+          os_name: ${{ steps.parsed.outputs.os_name }}
+          os_version: ${{ steps.parsed.outputs.os_version }}
+          arch: ${{ steps.parsed.outputs.arch }}
+          compiler_name: ${{ steps.parsed.outputs.compiler_name }}
+          compiler_version: ${{ steps.parsed.outputs.compiler_version }}
+          build_type: ${{ matrix.build_type }}
+
+      - name: Configure cmake
+        run: |
+          cmake --preset ${{ steps.parsed.outputs.compiler_name }} ${{ steps.parsed.outputs.compiler_name == 'msvc' && '-A x64 -T v143' || '' }} -D ENABLE_DEVELOPER_MODE:BOOL=${{ matrix.developer_mode }} -D OPT_ENABLE_COVERAGE:BOOL=${{ matrix.build_type == 'Debug' }}
+
+      - name: Build and test
+        run: |
+          conan build . ${{ steps.conan.outputs.args }}
+
+      - name: Unix - Coverage
+        if: runner.os != 'Windows' && matrix.build_type == 'Debug'
+        working-directory: build/${{ steps.parsed.outputs.compiler_name }}
+        run: |
+          ctest -C ${{ matrix.build_type }}
+          gcovr -j ${{ env.nproc }} --delete --root ../../ --print-summary --xml-pretty --xml coverage.xml . --gcov-executable '${{ steps.parsed.outputs.gcov_executable }}'
+
+      - name: Windows - Coverage
+        if: runner.os == 'Windows' && matrix.build_type == 'Debug'
+        working-directory: build/${{ steps.parsed.outputs.compiler_name }}
+        run: |
+          OpenCppCoverage.exe --export_type cobertura:coverage.xml --cover_children -- ctest -C ${{ matrix.build_type }}
+
+      - name: Publish to codecov
+        if: matrix.build_type == 'Debug'
+        uses: codecov/codecov-action@v4.4.0
+        with:
+          files: ./build/${{ steps.parsed.outputs.compiler_name }}/coverage.xml
+          flags: ${{ runner.os }}
+          name: ${{ runner.os }}-coverage
+          token: ${{ secrets.CODECOV_TOKEN }}
+          verbose: true
+
+      - name: CPack
+        if: matrix.package_generator != ''
+        working-directory: build/${{ steps.parsed.outputs.compiler_name }}
+        run: |
+          cpack -C ${{ matrix.build_type }} -G ${{ matrix.package_generator }} -B _package -V
+
+      - name: Publish tagged
+        uses: softprops/action-gh-release@v2.0.5
+        if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.package_generator != '' }}
+        with:
+          files: |
+            build/${{ steps.parsed.outputs.compiler_name }}/_package/*.*

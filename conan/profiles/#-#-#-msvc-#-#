@@ -1,0 +1,14 @@
+include(_common)
+
+{% set compiler, version, compiler_exe = detect_api.detect_cl_compiler() %}
+{% set runtime, _ = detect_api.default_msvc_runtime(compiler) %}
+
+[settings]
+compiler={{ compiler }}
+compiler.cppstd=20
+compiler.runtime={{ runtime }}
+compiler.version={{ version }}
+
+[conf]
+tools.build:compiler_executables={'c': '{{ compiler_exe }}', 'cpp': '{{ compiler_exe | replace('gcc', 'g++') | replace('clang', 'clang++') }}'}
+&:tools.cmake.cmaketoolchain:generator=Visual Studio 17 2022

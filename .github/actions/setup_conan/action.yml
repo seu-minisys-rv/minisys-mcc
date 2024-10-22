@@ -1,0 +1,100 @@
+name: "setup_conan"
+description: "sets up conan"
+inputs:
+  os_name:
+    required: true
+    description: "Operating system name"
+  os_version:
+    required: true
+    description: "Operating system version"
+  arch:
+    required: true
+    description: "Architecture"
+  compiler_name:
+    required: true
+    description: "Compiler name"
+  compiler_version:
+    required: true
+    description: "Compiler version"
+  build_type:
+    required: true
+    description: "Build type"
+  args:
+    description: "Additional conan args"
+    default: ""
+  recipe_repository:
+    description: "The conan recipe repository to be checked out and added as a conan remote"
+    default: ""
+outputs:
+  home:
+    description: "The conan home path"
+    value: ${{ steps.output.outputs.home }}
+  host_profile:
+    description: "The conan host profile to be used"
+    value: ${{ steps.output.outputs.host_profile }}
+  build_profile:
+    description: "The conan build profile to be used"
+    value: ${{ steps.output.outputs.build_profile }}
+  args:
+    description: "The corresponding args that should be used in conan commands afterwards"
+    value: ${{ steps.output.outputs.args }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install conan
+      shell: bash
+      run: |
+        pip3 install conan
+
+    - name: Detect conan default profile (used as build profile afterwards)
+      shell: bash
+      run: |
+        conan profile detect
+
+    - name: Output
+      id: output
+      shell: bash
+      run: |
+        echo "home=$(conan config home)" >> "$GITHUB_OUTPUT"
+
+        export HOST_PROFILE=$(python3 script/match_conan_profile.py "${{ inputs.os_name }}-${{ inputs.os_version }}-${{ inputs.arch }}-${{ inputs.compiler_name }}-${{ inputs.compiler_version }}-${{ inputs.build_type }}")
+        echo "host_profile=$HOST_PROFILE" >> "$GITHUB_OUTPUT"
+
+        export BUILD_PROFILE=default
+        echo "build_profile=$BUILD_PROFILE" >> "$GITHUB_OUTPUT"
+
+        echo "args=-pr:b _common -pr:b '$BUILD_PROFILE' -s:b 'build_type=Release' -pr:h '$HOST_PROFILE' -s:h 'build_type=${{ inputs.build_type }}' ${{ inputs.args }}" >> "$GITHUB_OUTPUT"
+
+    - name: Install conan config folder
+      shell: bash
+      run: |
+        conan config install ./conan
+
+    - name: Checkout the specified recipe repository
+      if: inputs.recipe_repository != ''
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.recipe_repository }}
+        path: conan_recipes
+
+    - name: Add the specified recipe repository as a remote
+      if: inputs.recipe_repository != ''
+      shell: bash
+      run: |
+        conan remote add local conan_recipes
+
+    - name: Cleanup conan system packages (they are not properly cached)
+      shell: bash
+      run: |
+        conan remove '*/system' -c
+
+    - name: Install conan packages
+      shell: bash
+      run: |
+        conan install . ${{ steps.output.outputs.args }} -b missing
+
+    - name: Clean 30 days unused conan caches
+      shell: bash
+      run: |
+        conan remove '*' --lru=30d
